@@ -47,5 +47,15 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  adminer:
+    image: adminer:latest
+    container_name: retainai-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
