@@ -1,0 +1,45 @@
+# RetainAI local stack:
+#   - db: PostgreSQL with automatic schema/data initialization from sql/
+#   - api: FastAPI service loading trained artifacts and calling local Ollama
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: retainai-db
+    environment:
+      POSTGRES_DB: retainai
+      POSTGRES_USER: retainai
+      POSTGRES_PASSWORD: retainai_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retainai -d retainai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: retainai-api
+    environment:
+      RETAINAI_ARTIFACT_DIR: /app/artifacts
+      OLLAMA_URL: http://host.docker.internal:11434/api/generate
+      OLLAMA_MODEL: llama3
+      OLLAMA_TIMEOUT_SECONDS: "20"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
