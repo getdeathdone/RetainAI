@@ -1,0 +1,52 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# ML artifacts and generated data
+artifacts/
+models/
+data/
+*.joblib
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.onnx
+
+# Logs and runtime files
+*.log
+logs/
+tmp/
+temp/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Docker and database local state
+docker-data/
+postgres-data/
+*.sql.dump
+*.backup
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
