@@ -74,7 +74,7 @@ class TabularChurnDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         if isinstance(features, torch.Tensor):
             tensor = features.detach().clone().float()
         else:
-            tensor = torch.as_tensor(np.asarray(features), dtype=torch.float32)
+            tensor = torch.as_tensor(np.asarray(features).copy(), dtype=torch.float32)
 
         if not torch.isfinite(tensor).all():
             raise ValueError("features contain NaN or infinite values.")
@@ -86,7 +86,7 @@ class TabularChurnDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         if isinstance(targets, torch.Tensor):
             tensor = targets.detach().clone().float()
         else:
-            tensor = torch.as_tensor(np.asarray(targets), dtype=torch.float32)
+            tensor = torch.as_tensor(np.asarray(targets).copy(), dtype=torch.float32)
 
         unique_values = set(torch.unique(tensor).cpu().numpy().tolist())
         if not unique_values.issubset({0.0, 1.0}):

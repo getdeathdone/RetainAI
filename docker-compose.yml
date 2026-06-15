@@ -14,7 +14,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d:ro
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./sql/extract.sql:/docker-entrypoint-initdb.d/02_extract.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U retainai -d retainai"]
       interval: 10s

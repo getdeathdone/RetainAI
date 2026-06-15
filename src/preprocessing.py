@@ -216,11 +216,12 @@ class ChurnDataPreprocessor:
     test_size: float = 0.2
     random_state: int = 42
     apply_outlier_filter: bool = True
+    pipeline: Pipeline | None = field(default=None, init=False)
+    outlier_filter: HardOutlierFilter | None = field(default=None, init=False)
+    feature_names_: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
-        self.pipeline: Pipeline | None = None
-        self.outlier_filter: HardOutlierFilter | None = None
-        self.feature_names_: list[str] = []
+        LOGGER.debug("Initialized ChurnDataPreprocessor.")
 
     def prepare_data(self, df: pd.DataFrame) -> tuple[NDArray[np.float32], NDArray[np.float32], pd.Series, pd.Series]:
         """Validate, split, fit preprocessing pipeline and transform features.
@@ -509,7 +510,7 @@ def build_fake_feature_mart(n_rows: int = 1000, random_state: int = 42) -> pd.Da
                 bins=[-np.inf, 250, 1000, np.inf],
                 labels=["low", "medium", "high"],
             ).astype(str),
-            "extracted_at": pd.Timestamp.utcnow(),
+            "extracted_at": pd.Timestamp.now(tz="UTC"),
         }
     )
 
