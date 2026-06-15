@@ -1,0 +1,31 @@
+# Keep Docker build context small and predictable.
+
+.git/
+.venv/
+venv/
+env/
+ENV/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.env
+.env.*
+!.env.example
+
+logs/
+tmp/
+temp/
+docker-data/
+postgres-data/
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Keep model artifacts included: Dockerfile copies artifacts/ into the API image.
+!artifacts/

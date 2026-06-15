@@ -14,13 +14,15 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
+import asyncpg
 import httpx
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Path as ApiPath, Request, status
 from pydantic import BaseModel, Field
 
 try:
@@ -43,6 +45,12 @@ DL_MODEL_PATH = ARTIFACT_DIR / "dl_model.pth"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "20"))
+
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
+POSTGRES_DB = os.getenv("POSTGRES_DB", "retainai")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "retainai")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "retainai_password")
 
 APP_STATE: dict[str, Any] = {}
 
@@ -156,6 +164,7 @@ class HealthResponse(BaseModel):
 
     status: Literal["ok", "degraded"]
     artifacts_loaded: dict[str, bool]
+    database_connected: bool
     ollama_url: str
     ollama_model: str
 
@@ -174,9 +183,20 @@ async def lifespan(app: FastAPI):
         APP_STATE["preprocessor"] = ChurnDataPreprocessor.load_preprocessor(PREPROCESSOR_PATH)
         APP_STATE["baseline_model"] = ChurnBaselineModel.load_model(BASELINE_MODEL_PATH)
         APP_STATE["dl_model"] = ChurnDeepLearningModel.load_model(DL_MODEL_PATH)
+        APP_STATE["db_pool"] = await asyncpg.create_pool(
+            host=POSTGRES_HOST,
+            port=POSTGRES_PORT,
+            database=POSTGRES_DB,
+            user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD,
+            min_size=1,
+            max_size=5,
+            command_timeout=30,
+        )
         app.state.preprocessor = APP_STATE["preprocessor"]
         app.state.baseline_model = APP_STATE["baseline_model"]
         app.state.dl_model = APP_STATE["dl_model"]
+        app.state.db_pool = APP_STATE["db_pool"]
         LOGGER.info("All RetainAI artifacts loaded successfully.")
     except FileNotFoundError as exc:
         LOGGER.exception("Required model artifact is missing.")
@@ -193,6 +213,10 @@ async def lifespan(app: FastAPI):
         app.state.preprocessor = None
         app.state.baseline_model = None
         app.state.dl_model = None
+        db_pool = getattr(app.state, "db_pool", None)
+        if db_pool is not None:
+            await db_pool.close()
+        app.state.db_pool = None
 
 
 app = FastAPI(
@@ -212,11 +236,13 @@ async def health() -> HealthResponse:
         "baseline_model": "baseline_model" in APP_STATE,
         "dl_model": "dl_model" in APP_STATE,
     }
-    service_ok = all(artifacts_loaded.values())
+    database_connected = APP_STATE.get("db_pool") is not None
+    service_ok = all(artifacts_loaded.values()) and database_connected
 
     return HealthResponse(
         status="ok" if service_ok else "degraded",
         artifacts_loaded=artifacts_loaded,
+        database_connected=database_connected,
         ollama_url=OLLAMA_URL,
         ollama_model=OLLAMA_MODEL,
     )
@@ -225,6 +251,50 @@ async def health() -> HealthResponse:
 @app.post("/predict/churn", response_model=PredictionResponse)
 async def predict_churn(customer: CustomerData, request: Request) -> PredictionResponse:
     """Predict churn with both ML models and generate an LLM retention action."""
+
+    customer_dict = _model_to_dict(customer)
+    return await _predict_from_customer_dict(customer_dict, request)
+
+
+@app.get("/customers/{user_id}/predict", response_model=PredictionResponse)
+async def predict_customer_from_database(
+    request: Request,
+    user_id: int = ApiPath(ge=1),
+) -> PredictionResponse:
+    """Fetch customer features from Postgres and return churn prediction."""
+
+    db_pool = getattr(request.app.state, "db_pool", None) or APP_STATE.get("db_pool")
+    if db_pool is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection pool is not available.",
+        )
+
+    try:
+        async with db_pool.acquire() as connection:
+            record = await connection.fetchrow(
+                "SELECT * FROM retainai.ml_customer_features WHERE user_id = $1",
+                user_id,
+            )
+    except Exception as exc:
+        LOGGER.exception("Failed to fetch customer %s from database.", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch customer features from database.",
+        ) from exc
+
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Customer {user_id} was not found in ml_customer_features.",
+        )
+
+    customer_dict = _record_to_customer_dict(record)
+    return await _predict_from_customer_dict(customer_dict, request)
+
+
+async def _predict_from_customer_dict(customer_dict: dict[str, Any], request: Request) -> PredictionResponse:
+    """Shared prediction flow for manual payloads and DB-backed customers."""
 
     preprocessor = getattr(request.app.state, "preprocessor", None) or APP_STATE.get("preprocessor")
     baseline_model = getattr(request.app.state, "baseline_model", None) or APP_STATE.get("baseline_model")
@@ -235,8 +305,6 @@ async def predict_churn(customer: CustomerData, request: Request) -> PredictionR
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Model artifacts are not loaded.",
         )
-
-    customer_dict = _model_to_dict(customer)
 
     try:
         customer_frame = pd.DataFrame([customer_dict])
@@ -252,7 +320,7 @@ async def predict_churn(customer: CustomerData, request: Request) -> PredictionR
         )
 
         return PredictionResponse(
-            user_id=customer.user_id,
+            user_id=customer_dict.get("user_id"),
             baseline_churn_probability=round(baseline_probability, 6),
             dl_churn_probability=round(dl_probability, 6),
             ensemble_churn_probability=round(ensemble_probability, 6),
@@ -383,3 +451,27 @@ def _model_to_dict(model: BaseModel) -> dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def _record_to_customer_dict(record: asyncpg.Record) -> dict[str, Any]:
+    """Convert a feature-mart DB record into CustomerData-compatible dict."""
+
+    raw_record = dict(record)
+    allowed_fields = _customer_schema_fields()
+    customer_dict: dict[str, Any] = {}
+
+    for key in allowed_fields:
+        value = raw_record.get(key)
+        if isinstance(value, Decimal):
+            value = float(value)
+        customer_dict[key] = value
+
+    return _model_to_dict(CustomerData(**customer_dict))
+
+
+def _customer_schema_fields() -> set[str]:
+    """Return CustomerData field names for both Pydantic v1 and v2."""
+
+    if hasattr(CustomerData, "model_fields"):
+        return set(CustomerData.model_fields.keys())
+    return set(CustomerData.__fields__.keys())

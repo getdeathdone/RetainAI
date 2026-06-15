@@ -8,8 +8,10 @@ point before adding a PyTorch sequence model.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -184,6 +186,36 @@ class ChurnBaselineModel:
         LOGGER.info("Saved baseline model artifact to %s.", output_path)
         return output_path
 
+    def save_metrics(
+        self,
+        metrics: dict[str, float],
+        artifact_path: str | Path = "artifacts/metrics.json",
+        top_n_features: int = 10,
+    ) -> Path:
+        """Persist baseline metrics and feature importances for portfolio reporting."""
+
+        output_path = Path(artifact_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        existing_payload: dict[str, Any] = {}
+        if output_path.exists():
+            existing_payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+        top_features = self.get_feature_importances(top_n=top_n_features)
+        existing_payload["baseline"] = {
+            "model_type": "RandomForestClassifier",
+            "metrics": metrics,
+            "top_features": top_features.to_dict(orient="records"),
+            "saved_at": datetime.now(UTC).isoformat(),
+        }
+
+        output_path.write_text(
+            json.dumps(existing_payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        LOGGER.info("Saved baseline metrics to %s.", output_path)
+        return output_path
+
     @classmethod
     def load_model(cls, artifact_path: str | Path) -> "ChurnBaselineModel":
         """Load a trained baseline model artifact."""
@@ -330,7 +362,9 @@ if __name__ == "__main__":
     demo_metrics = baseline_model.evaluate(X_test=X_test_demo, y_test=y_test_demo)
     demo_importances = baseline_model.get_feature_importances(top_n=10)
     saved_artifact = baseline_model.save_model("artifacts/baseline_model.joblib")
+    metrics_artifact = baseline_model.save_metrics(demo_metrics, "artifacts/metrics.json")
 
     LOGGER.info("Smoke test metrics: %s", demo_metrics)
     LOGGER.info("Smoke test top features:\n%s", demo_importances)
     LOGGER.info("Smoke test model artifact: %s", saved_artifact)
+    LOGGER.info("Smoke test metrics artifact: %s", metrics_artifact)

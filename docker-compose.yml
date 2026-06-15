@@ -33,6 +33,11 @@ services:
       OLLAMA_URL: http://host.docker.internal:11434/api/generate
       OLLAMA_MODEL: llama3
       OLLAMA_TIMEOUT_SECONDS: "20"
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: retainai
+      POSTGRES_USER: retainai
+      POSTGRES_PASSWORD: retainai_password
     ports:
       - "8000:8000"
     depends_on:

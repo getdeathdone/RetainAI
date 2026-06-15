@@ -9,8 +9,10 @@ encapsulated in `ChurnDeepLearningModel`.
 from __future__ import annotations
 
 import copy
+import json
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -335,6 +337,52 @@ class ChurnDeepLearningModel:
         LOGGER.info("Saved DL model artifact to %s.", output_path)
         return output_path
 
+    def save_metrics(
+        self,
+        metrics: dict[str, float],
+        history: dict[str, list[float]] | None = None,
+        artifact_path: str | Path = "artifacts/metrics.json",
+    ) -> Path:
+        """Persist deep learning metrics into the shared metrics artifact."""
+
+        output_path = Path(artifact_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        existing_payload: dict[str, Any] = {}
+        if output_path.exists():
+            existing_payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+        history_summary: dict[str, float | int] = {}
+        if history:
+            history_summary = {
+                "epochs_ran": len(history.get("train_loss", [])),
+                "best_val_loss": float(min(history.get("val_loss", [float("nan")]))),
+                "best_val_roc_auc": float(max(history.get("val_roc_auc", [float("nan")]))),
+                "best_val_f1": float(max(history.get("val_f1", [float("nan")]))),
+            }
+
+        existing_payload["deep_learning"] = {
+            "model_type": "ChurnMLP",
+            "metrics": metrics,
+            "history_summary": history_summary,
+            "config": {
+                "input_dim": self.input_dim,
+                "hidden_dims": self.hidden_dims,
+                "dropout": self.dropout,
+                "activation": self.activation,
+                "learning_rate": self.learning_rate,
+                "weight_decay": self.weight_decay,
+            },
+            "saved_at": datetime.now(UTC).isoformat(),
+        }
+
+        output_path.write_text(
+            json.dumps(existing_payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        LOGGER.info("Saved DL metrics to %s.", output_path)
+        return output_path
+
     @classmethod
     def load_model(
         cls,
@@ -539,7 +587,9 @@ if __name__ == "__main__":
     )
     metrics = dl_model.evaluate(X_test_demo, y_test_demo)
     artifact = dl_model.save_model("artifacts/dl_model.pth")
+    metrics_artifact = dl_model.save_metrics(metrics, history, "artifacts/metrics.json")
 
     LOGGER.info("Smoke test history: %s", history)
     LOGGER.info("Smoke test metrics: %s", metrics)
     LOGGER.info("Smoke test DL artifact: %s", artifact)
+    LOGGER.info("Smoke test metrics artifact: %s", metrics_artifact)
