@@ -66,6 +66,20 @@ transaction_status_features AS (
     FROM transactions AS t
     GROUP BY t.user_id
 ),
+transaction_recent_features AS (
+    SELECT
+        t.user_id,
+        count(*) FILTER (
+            WHERE t.status = 'paid'
+                AND t.transaction_ts >= (SELECT as_of_ts FROM params) - interval '30 days'
+        ) AS paid_tx_count_30d,
+        COALESCE(sum(t.amount) FILTER (
+            WHERE t.status = 'paid'
+                AND t.transaction_ts >= (SELECT as_of_ts FROM params) - interval '30 days'
+        ), 0) AS revenue_30d
+    FROM transactions AS t
+    GROUP BY t.user_id
+),
 session_windows AS (
     SELECT
         s.*,
@@ -109,6 +123,24 @@ session_features AS (
         max(sw.rolling_5session_page_views) FILTER (WHERE sw.recent_session_rank = 1) AS last_rolling_5session_page_views
     FROM session_windows AS sw
     GROUP BY sw.user_id
+),
+session_recent_features AS (
+    SELECT
+        s.user_id,
+        count(*) FILTER (
+            WHERE s.session_start_ts >= (SELECT as_of_ts FROM params) - interval '30 days'
+        ) AS sessions_30d,
+        COALESCE(sum(s.actions_count) FILTER (
+            WHERE s.session_start_ts >= (SELECT as_of_ts FROM params) - interval '30 days'
+        ), 0) AS actions_30d,
+        COALESCE(sum(s.page_views) FILTER (
+            WHERE s.session_start_ts >= (SELECT as_of_ts FROM params) - interval '30 days'
+        ), 0) AS page_views_30d,
+        COALESCE(sum(s.support_tickets_count) FILTER (
+            WHERE s.session_start_ts >= (SELECT as_of_ts FROM params) - interval '30 days'
+        ), 0) AS support_tickets_30d
+    FROM sessions AS s
+    GROUP BY s.user_id
 ),
 monthly_activity AS (
     SELECT
@@ -182,6 +214,8 @@ SELECT
     COALESCE(tf.avg_days_between_paid_tx, 0)::numeric(10, 2) AS avg_days_between_paid_tx,
     COALESCE(tf.cumulative_revenue, 0)::numeric(12, 2) AS ltv_observed,
     COALESCE(tf.last_rolling_3tx_avg_amount, 0)::numeric(10, 2) AS last_rolling_3tx_avg_amount,
+    COALESCE(trf.paid_tx_count_30d, 0) AS paid_tx_count_30d,
+    COALESCE(trf.revenue_30d, 0)::numeric(12, 2) AS revenue_30d,
     COALESCE(sf.session_count, 0) AS session_count,
     COALESCE(sf.total_page_views, 0) AS total_page_views,
     COALESCE(sf.avg_page_views, 0)::numeric(10, 2) AS avg_page_views,
@@ -194,9 +228,25 @@ SELECT
     COALESCE(sf.recent_3_sessions_avg_page_views, 0)::numeric(10, 2) AS recent_3_sessions_avg_page_views,
     COALESCE(sf.last_rolling_5session_actions, 0)::numeric(10, 2) AS last_rolling_5session_actions,
     COALESCE(sf.last_rolling_5session_page_views, 0)::numeric(10, 2) AS last_rolling_5session_page_views,
+    COALESCE(srf.sessions_30d, 0) AS sessions_30d,
+    COALESCE(srf.actions_30d, 0) AS actions_30d,
+    COALESCE(srf.page_views_30d, 0) AS page_views_30d,
+    COALESCE(srf.support_tickets_30d, 0) AS support_tickets_30d,
     COALESCE(at.avg_monthly_events_last_3m, 0)::numeric(10, 2) AS avg_monthly_events_last_3m,
     COALESCE(at.avg_monthly_events_before_3m, 0)::numeric(10, 2) AS avg_monthly_events_before_3m,
     COALESCE(at.monthly_activity_slope, 0)::numeric(18, 8) AS monthly_activity_slope,
+    (
+        COALESCE(at.avg_monthly_events_last_3m, 0)
+        / NULLIF(COALESCE(at.avg_monthly_events_before_3m, 0), 0)
+    )::numeric(10, 4) AS activity_drop_ratio,
+    (
+        COALESCE(tf.cumulative_revenue, 0)
+        / NULLIF(EXTRACT(day FROM ((SELECT as_of_ts FROM params) - u.signup_ts)), 0)
+    )::numeric(12, 4) AS revenue_per_account_day,
+    (
+        COALESCE(sf.total_actions, 0)::numeric
+        / NULLIF(COALESCE(sf.session_count, 0), 0)
+    )::numeric(10, 4) AS actions_per_session,
     CASE
         WHEN le.last_event_ts IS NULL THEN 1
         WHEN EXTRACT(day FROM ((SELECT as_of_ts FROM params) - le.last_event_ts)) >= 45 THEN 1
@@ -213,7 +263,9 @@ SELECT
 FROM users AS u
 LEFT JOIN transaction_features AS tf ON tf.user_id = u.user_id
 LEFT JOIN transaction_status_features AS tsf ON tsf.user_id = u.user_id
+LEFT JOIN transaction_recent_features AS trf ON trf.user_id = u.user_id
 LEFT JOIN session_features AS sf ON sf.user_id = u.user_id
+LEFT JOIN session_recent_features AS srf ON srf.user_id = u.user_id
 LEFT JOIN activity_trends AS at ON at.user_id = u.user_id
 LEFT JOIN last_event AS le ON le.user_id = u.user_id;
 

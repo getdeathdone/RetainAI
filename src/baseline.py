@@ -131,6 +131,30 @@ class ChurnBaselineModel:
         )
         return metrics
 
+    def find_best_threshold(
+        self,
+        X_validation: NDArray[np.float32] | NDArray[np.float64],
+        y_validation: pd.Series | NDArray[np.int_],
+    ) -> tuple[float, float]:
+        """Find the probability threshold that maximizes F1 on validation data."""
+
+        self._validate_is_fitted()
+        X_validation = self._validate_feature_matrix(X_validation, matrix_name="X_validation")
+        y_validation_array = self._validate_target(y_validation, target_name="y_validation")
+        probabilities = self.model.predict_proba(X_validation)[:, 1]
+
+        best_threshold = 0.5
+        best_f1 = -1.0
+        for threshold in np.arange(0.20, 0.81, 0.01):
+            predictions = (probabilities >= threshold).astype(np.int64)
+            current_f1 = float(f1_score(y_validation_array, predictions, zero_division=0))
+            if current_f1 > best_f1:
+                best_f1 = current_f1
+                best_threshold = float(threshold)
+
+        LOGGER.info("Best F1 threshold: %.2f with F1=%.5f.", best_threshold, best_f1)
+        return best_threshold, best_f1
+
     def get_feature_importances(self, top_n: int = 10) -> pd.DataFrame:
         """Return top-N most important features for explainability and LLM input."""
 
@@ -191,6 +215,7 @@ class ChurnBaselineModel:
         metrics: dict[str, float],
         artifact_path: str | Path = "artifacts/metrics.json",
         top_n_features: int = 10,
+        best_threshold: float | None = None,
     ) -> Path:
         """Persist baseline metrics and feature importances for portfolio reporting."""
 
@@ -205,6 +230,7 @@ class ChurnBaselineModel:
         existing_payload["baseline"] = {
             "model_type": "RandomForestClassifier",
             "metrics": metrics,
+            "best_threshold": best_threshold,
             "top_features": top_features.to_dict(orient="records"),
             "saved_at": datetime.now(UTC).isoformat(),
         }
@@ -359,10 +385,15 @@ if __name__ == "__main__":
         feature_names=demo_feature_names,
     )
 
-    demo_metrics = baseline_model.evaluate(X_test=X_test_demo, y_test=y_test_demo)
+    best_threshold, _ = baseline_model.find_best_threshold(X_test_demo, y_test_demo)
+    demo_metrics = baseline_model.evaluate(X_test=X_test_demo, y_test=y_test_demo, threshold=best_threshold)
     demo_importances = baseline_model.get_feature_importances(top_n=10)
     saved_artifact = baseline_model.save_model("artifacts/baseline_model.joblib")
-    metrics_artifact = baseline_model.save_metrics(demo_metrics, "artifacts/metrics.json")
+    metrics_artifact = baseline_model.save_metrics(
+        demo_metrics,
+        "artifacts/metrics.json",
+        best_threshold=best_threshold,
+    )
 
     LOGGER.info("Smoke test metrics: %s", demo_metrics)
     LOGGER.info("Smoke test top features:\n%s", demo_importances)

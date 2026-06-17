@@ -82,6 +82,8 @@ class CustomerData(BaseModel):
     avg_days_between_paid_tx: float = Field(ge=0)
     ltv_observed: float = Field(ge=0)
     last_rolling_3tx_avg_amount: float = Field(ge=0)
+    paid_tx_count_30d: int = Field(default=0, ge=0)
+    revenue_30d: float = Field(default=0, ge=0)
     session_count: int = Field(ge=0)
     total_page_views: int = Field(ge=0)
     avg_page_views: float = Field(ge=0)
@@ -94,9 +96,16 @@ class CustomerData(BaseModel):
     recent_3_sessions_avg_page_views: float = Field(ge=0)
     last_rolling_5session_actions: float = Field(ge=0)
     last_rolling_5session_page_views: float = Field(ge=0)
+    sessions_30d: int = Field(default=0, ge=0)
+    actions_30d: int = Field(default=0, ge=0)
+    page_views_30d: int = Field(default=0, ge=0)
+    support_tickets_30d: int = Field(default=0, ge=0)
     avg_monthly_events_last_3m: float = Field(ge=0)
     avg_monthly_events_before_3m: float = Field(ge=0)
     monthly_activity_slope: float = 0.0
+    activity_drop_ratio: float = Field(default=0, ge=0)
+    revenue_per_account_day: float = Field(default=0, ge=0)
+    actions_per_session: float = Field(default=0, ge=0)
     ltv_segment: Literal["low", "medium", "high"] = "low"
 
     class Config:
@@ -126,6 +135,8 @@ class CustomerData(BaseModel):
                 "avg_days_between_paid_tx": 31.5,
                 "ltv_observed": 720.5,
                 "last_rolling_3tx_avg_amount": 158.2,
+                "paid_tx_count_30d": 1,
+                "revenue_30d": 144.1,
                 "session_count": 16,
                 "total_page_views": 124,
                 "avg_page_views": 7.75,
@@ -138,9 +149,16 @@ class CustomerData(BaseModel):
                 "recent_3_sessions_avg_page_views": 4.2,
                 "last_rolling_5session_actions": 3.1,
                 "last_rolling_5session_page_views": 5.8,
+                "sessions_30d": 2,
+                "actions_30d": 9,
+                "page_views_30d": 15,
+                "support_tickets_30d": 1,
                 "avg_monthly_events_last_3m": 2.7,
                 "avg_monthly_events_before_3m": 6.8,
                 "monthly_activity_slope": -0.00000002,
+                "activity_drop_ratio": 0.397,
+                "revenue_per_account_day": 3.002,
+                "actions_per_session": 5.125,
                 "ltv_segment": "medium",
             }
         }
@@ -462,6 +480,8 @@ def _record_to_customer_dict(record: asyncpg.Record) -> dict[str, Any]:
 
     for key in allowed_fields:
         value = raw_record.get(key)
+        if value is None:
+            continue
         if isinstance(value, Decimal):
             value = float(value)
         customer_dict[key] = value

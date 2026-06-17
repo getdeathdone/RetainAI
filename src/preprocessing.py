@@ -52,6 +52,8 @@ DEFAULT_NUMERIC_FEATURES: list[str] = [
     "avg_days_between_paid_tx",
     "ltv_observed",
     "last_rolling_3tx_avg_amount",
+    "paid_tx_count_30d",
+    "revenue_30d",
     "session_count",
     "total_page_views",
     "avg_page_views",
@@ -64,9 +66,16 @@ DEFAULT_NUMERIC_FEATURES: list[str] = [
     "recent_3_sessions_avg_page_views",
     "last_rolling_5session_actions",
     "last_rolling_5session_page_views",
+    "sessions_30d",
+    "actions_30d",
+    "page_views_30d",
+    "support_tickets_30d",
     "avg_monthly_events_last_3m",
     "avg_monthly_events_before_3m",
     "monthly_activity_slope",
+    "activity_drop_ratio",
+    "revenue_per_account_day",
+    "actions_per_session",
 ]
 
 DEFAULT_CATEGORICAL_FEATURES: list[str] = [
@@ -454,6 +463,10 @@ def build_fake_feature_mart(n_rows: int = 1000, random_state: int = 42) -> pd.Da
     paid_tx_count = rng.poisson(lam=4.0, size=n_rows)
     session_count = rng.poisson(lam=8.0, size=n_rows)
     monetary_value = np.round(rng.gamma(shape=2.0, scale=120.0, size=n_rows), 2)
+    paid_tx_count_30d = rng.binomial(n=np.maximum(paid_tx_count, 1), p=0.22)
+    sessions_30d = rng.binomial(n=np.maximum(session_count, 1), p=0.28)
+    avg_monthly_events_last_3m = rng.uniform(0, 20, size=n_rows)
+    avg_monthly_events_before_3m = rng.uniform(0.1, 20, size=n_rows)
 
     # Inject a few extreme but realistic portfolio-test outliers.
     outlier_count = max(1, n_rows // 100)
@@ -490,6 +503,8 @@ def build_fake_feature_mart(n_rows: int = 1000, random_state: int = 42) -> pd.Da
             "avg_days_between_paid_tx": rng.uniform(7, 65, size=n_rows),
             "ltv_observed": monetary_value,
             "last_rolling_3tx_avg_amount": monetary_value / np.maximum(paid_tx_count, 1),
+            "paid_tx_count_30d": paid_tx_count_30d,
+            "revenue_30d": paid_tx_count_30d * (monetary_value / np.maximum(paid_tx_count, 1)),
             "session_count": session_count,
             "total_page_views": session_count * rng.integers(2, 12, size=n_rows),
             "avg_page_views": rng.uniform(2, 12, size=n_rows),
@@ -502,9 +517,16 @@ def build_fake_feature_mart(n_rows: int = 1000, random_state: int = 42) -> pd.Da
             "recent_3_sessions_avg_page_views": rng.uniform(1, 14, size=n_rows),
             "last_rolling_5session_actions": rng.uniform(0, 12, size=n_rows),
             "last_rolling_5session_page_views": rng.uniform(1, 14, size=n_rows),
-            "avg_monthly_events_last_3m": rng.uniform(0, 20, size=n_rows),
-            "avg_monthly_events_before_3m": rng.uniform(0, 20, size=n_rows),
+            "sessions_30d": sessions_30d,
+            "actions_30d": sessions_30d * rng.integers(0, 8, size=n_rows),
+            "page_views_30d": sessions_30d * rng.integers(1, 10, size=n_rows),
+            "support_tickets_30d": rng.poisson(lam=0.2, size=n_rows),
+            "avg_monthly_events_last_3m": avg_monthly_events_last_3m,
+            "avg_monthly_events_before_3m": avg_monthly_events_before_3m,
             "monthly_activity_slope": rng.normal(0, 0.00000001, size=n_rows),
+            "activity_drop_ratio": avg_monthly_events_last_3m / avg_monthly_events_before_3m,
+            "revenue_per_account_day": monetary_value / np.maximum(account_age_days, 1),
+            "actions_per_session": (session_count * rng.integers(1, 10, size=n_rows)) / np.maximum(session_count, 1),
             "ltv_segment": pd.cut(
                 monetary_value,
                 bins=[-np.inf, 250, 1000, np.inf],
@@ -515,10 +537,16 @@ def build_fake_feature_mart(n_rows: int = 1000, random_state: int = 42) -> pd.Da
     )
 
     churn_logit = (
-        -1.8
-        + 0.035 * df["recency_days"]
-        - 0.08 * df["paid_tx_count"]
-        - 0.05 * df["session_count"]
+        -3.0
+        + 0.045 * df["recency_days"]
+        + 0.012 * df["payment_recency_days"]
+        - 0.07 * df["paid_tx_count"]
+        - 0.04 * df["session_count"]
+        - 0.18 * df["sessions_30d"]
+        - 0.28 * df["paid_tx_count_30d"]
+        + 0.75 * (df["activity_drop_ratio"] < 0.60).astype(float)
+        + 0.45 * (df["sessions_30d"] == 0).astype(float)
+        + 0.35 * (df["paid_tx_count_30d"] == 0).astype(float)
         + 0.45 * (df["plan_type"] == "free").astype(float)
         + 0.25 * (df["support_tickets_count"] > 1).astype(float)
     )
